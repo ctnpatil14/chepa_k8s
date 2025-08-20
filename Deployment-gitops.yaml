@@ -1,0 +1,1189 @@
+kubectl explain deployment	
+
+kubectl api-resources netpol
+
+controlplane:~$ kubectl get deployment -o wide
+NAME         READY   UP-TO-DATE   AVAILABLE   AGE     CONTAINERS   IMAGES       SELECTOR
+my-web-app   3/3     3            3           4m16s   app          nginx:1.21   app=my-web-app
+
+kubectl rollout status deployment/my-web-app
+
+controlplane:~$ kubectl rollout status deployment/my-web-app
+Waiting for deployment "my-web-app" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "my-web-app" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "my-web-app" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "my-web-app" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "my-web-app" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "my-web-app" rollout to finish: 2 of 3 updated replicas are available...
+deployment "my-web-app" successfully rolled out
+
+kubectl rollout history deployment/my-web-app
+
+kubectl rollout history deployment/my-web-app --revision=1
+
+controlplane:~$ kubectl rollout history deployment/my-web-app
+deployment.apps/my-web-app 
+REVISION  CHANGE-CAUSE
+3         <none>
+4         <none>
+5         <none>
+
+
+controlplane:~$ kubectl rollout undo deployment/my-web-app --to-revision=3
+deployment.apps/my-web-app rolled back
+
+
+controlplane:~$ kubectl rollout history deployment/my-web-app
+deployment.apps/my-web-app 
+REVISION  CHANGE-CAUSE
+4         <none>
+5         <none>
+6         kubectl set image deployment/my-web-app app=nginx:1.24 --record=true
+7         <none>
+
+controlplane:~$ 
+controlplane:~$ 
+controlplane:~$ kubectl rollout status deployment/my-web-app
+Waiting for deployment "my-web-app" rollout to finish: 2 of 3 updated replicas are available...
+deployment "my-web-app" successfully rolled out
+controlplane:~$ kubectl rollout history deployment/my-web-app
+deployment.apps/my-web-app 
+REVISION  CHANGE-CAUSE
+4         <none>
+6         kubectl set image deployment/my-web-app app=nginx:1.24 --record=true
+7         <none>
+8         <none>
+
+
+
+Revisions
+प्रत्येक वेळी जेव्हा Deployment spec बदलतो, Kubernetes एक नवीन revision तयार करतो
+
+Rolling Update
+जुने पॉड्स बंद करून नवीन पॉड्स एक-एक करून start होतात (
+maxUnavailable
+,
+maxSurge
+)
+State Store
+Revisions -> ReplicaSet मध्ये store होतात — प्रत्येक revision साठी एक ReplicaSet
+
+Rollback
+जुन्या ReplicaSet वर परत जाऊन त्याच पॉड्स पुन्हा create करतो
+
+
+
+
+भाऊ, तू म्हणालास — *"Istio nahi kalayla, A/B testing, Blue Green, samjha re full on!"*  
+तर चला, **सगळं एकदम सोप्या मराठीत, बिना टेन्शन, बिना Istio**, फक्त **Kubernetes च्या बेसिक गोष्टींवर** — आणि **सगळे कमांड्स देतो, execute करू शकशील तसे!**
+
+---
+
+## 🎯 उद्देश:
+> फक्त **एका स्टोअर (उदा: Pune FC)** साठी नवीन billing app (v2) चालवायचं,  
+> इतर सर्व स्टोअर्स (Mumbai, Nagpur) जुन्या व्हर्जनवर (v1),  
+> आणि **कसं करायचं — Blue-Green, A/B Testing, Rolling Update** — हे सगळं समजून घ्यायचं.
+
+---
+
+# 🔹 1. सर्वात सोपी गोष्ट: **Per-Store Deployment (तुझ्या समस्येसाठी BEST)**
+
+> 💡 जर तुला **फक्त Pune FC** ला नवीन app हवं असेल, तर इतरांना छेडू नकोस!
+
+### ✅ स्ट्रॅटेजी:
+- प्रत्येक स्टोअरसाठी वेगवेगळं Deployment
+- उदा:
+  - `billing-pune-fc` → `image: billing:v2`
+  - `billing-mumbai-lp` → `image: billing:v1`
+
+---
+
+### 📁 Step 1: Pune FC साठी नवं Deployment (v2)
+
+```yaml
+# deployment-pune-v2.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-pune-fc
+  labels:
+    app: billing
+    store: pune-fc
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: billing
+      store: pune-fc
+  template:
+    meta
+      labels:
+        app: billing
+        store: pune-fc
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v2
+        ports:
+        - containerPort: 8080
+```
+
+### 🔧 Deploy करा:
+```bash
+kubectl apply -f deployment-pune-v2.yaml
+```
+
+> ✅ Pune FC ला आता v2
+
+---
+
+### 📁 Step 2: Mumbai साठी जुनंच राहू द्या (v1)
+
+```yaml
+# deployment-mumbai-v1.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-mumbai-lp
+  labels:
+    app: billing
+    store: mumbai-lp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: billing
+      store: mumbai-lp
+  template:
+    meta
+      labels:
+        app: billing
+        store: mumbai-lp
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v1  # ← जुनंच राहील
+        ports:
+        - containerPort: 8080
+```
+
+```bash
+kubectl apply -f deployment-mumbai-v1.yaml
+```
+
+> ✅ Mumbai ला अजूनही v1
+
+---
+
+### ✅ फायदे:
+- एकाच स्टोअरला update करायचं असेल तर फक्त त्याचं deployment बदला
+- इतरांना काही effect नाही
+- rollback? फक्त `kubectl apply` जुन्या YAML वर
+
+---
+
+# 🔹 2. Blue-Green Deployment (एकदम सगळ्यांना update करायचं — safe पद्धतीने)
+
+> 💡 जर तुला **सगळ्यांना एकाच वेळी update** करायचं असेल, पण **risk कमी करायचं असेल**
+
+### 🎯 कॉन्सेप्ट:
+- दोन deployments: `billing-blue` (v1), `billing-green` (v2)
+- एक सर्विस (Service) — जो फक्त एकाला point करतो
+- जेव्हा तयार असाल, तेव्हा Service बदलून **traffic पूर्णपणे v2 वर वळवा**
+
+---
+
+### 📁 Step 1: Blue (v1) चालू आहे
+
+```yaml
+# blue-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: billing
+      version: v1
+  template:
+    meta
+      labels:
+        app: billing
+        version: v1
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v1
+```
+
+```bash
+kubectl apply -f blue-deployment.yaml
+```
+
+---
+
+### 📁 Step 2: Green (v2) deploy करा — पण traffic नाही
+
+```yaml
+# green-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-green
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: billing
+      version: v2
+  template:
+    meta
+      labels:
+        app: billing
+        version: v2
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v2
+```
+
+```bash
+kubectl apply -f green-deployment.yaml
+```
+
+> ✅ v2 चालू आहे, पण traffic येत नाही
+
+---
+
+### 📁 Step 3: Service बनवा — आत्ता blue वर
+
+```yaml
+# service.yaml
+apiVersion: v1
+kind: Service
+meta
+  name: billing-service
+spec:
+  selector:
+    app: billing
+    version: v1   # ← फक्त blue (v1) ला traffic
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+```
+
+```bash
+kubectl apply -f service.yaml
+```
+
+---
+
+### 📁 Step 4: जेव्हा तयार असाल — Service बदला (v2 वर)
+
+```bash
+kubectl patch service billing-service -p '{"spec":{"selector":{"app":"billing", "version":"v2"}}}'
+```
+
+> ✅ आता सगळं traffic `billing-green` (v2) वर जाईल
+
+---
+
+### ✅ फायदे:
+- Zero downtime
+- जर v2 मध्ये issue असेल — लगेच परत जा:
+```bash
+kubectl patch service billing-service -p '{"spec":{"selector":{"app":"billing", "version":"v1"}}}'
+```
+
+---
+
+# 🔹 3. A/B Testing (काही users ला v1, काही ला v2)
+
+> 💡 जर तुला **काही percentage (उदा: 10%) users** ला v2 वर टेस्ट करायचं असेल
+
+### 🎯 पण: Kubernetes च्या बेसिक गोष्टींनी **अचूक A/B testing** शक्य नाही — त्यासाठी Istio, Nginx + header, किंवा load balancer लागतो.
+
+पण आपण **सोप्या पद्धतीने simulate** करू.
+
+---
+
+### 📁 उदाहरण: v1 आणि v2 एकाचवेळी चालवा
+
+```yaml
+# deployment-v1.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-v1
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: billing
+      version: v1
+  template:
+    meta
+      labels:
+        app: billing
+        version: v1
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v1
+```
+
+```yaml
+# deployment-v2.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-v2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billing
+      version: v2
+  template:
+    meta
+      labels:
+        app: billing
+        version: v2
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v2
+```
+
+```yaml
+# service.yaml
+apiVersion: v1
+kind: Service
+meta
+  name: billing-service
+spec:
+  selector:
+    app: billing
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+> कारण: v1 चे 9 पॉड्स, v2 चा 1 पॉड → rough 10% traffic v2 ला
+
+⚠️ हे **अचूक A/B testing नाही**, पण rough idea साठी वापरता येईल.
+
+---
+
+# 🔹 4. Rolling Update (डिफॉल्ट Kubernetes ची पद्धत)
+
+> जेव्हा तू `kubectl set image` करतोस, तेव्हा Kubernetes **एक-एक पॉड बदलतो**
+
+```bash
+kubectl set image deployment/billing-app app=mycompany/billing-app:v2
+```
+
+> मग Kubernetes:
+1. एक जुना पॉड बंद करतो
+2. एक नवीन v2 पॉड सुरू करतो
+3. हे पर्यंत चालू राहतं जोपर्यंत सगळे पॉड्स v2 वर येतील
+
+तू हे control करू शकतोस:
+
+```yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1   # 1 पॉड बंद असू शकतो
+    maxSurge: 1         # 1 अतिरिक्त पॉड येऊ शकतो
+```
+
+---
+
+# 🧠 सारांश: कोणती स्ट्रॅटेजी कधी वापरायची?
+
+| परिस्थिती | स्ट्रॅटेजी | कमांड |
+|-----------|------------|--------|
+| फक्त Pune FC ला update करायचं | ✅ Per-Store Deployment | `kubectl apply -f pune-v2.yaml` |
+| सगळ्यांना update करायचं, पण safe पद्धतीने | ✅ Blue-Green | `kubectl patch service ...` |
+| 10% users ला नवीन व्हर्जन द्यायचं | ⚠️ Rolling + replicas | v1: 9, v2: 1 |
+| अचूक A/B, header-based routing | ❌ Istio किंवा Nginx Ingress | तुला Istio शिकायचं लागेल |
+
+---
+
+# ✅ तुझ्या DMart साठी शिफारस:
+
+> 🔹 **Per-Store Deployment** ही तुझ्या समस्येसाठी **सर्वोत्तम आणि सोपी** स्ट्रॅटेजी आहे.
+
+### का?
+- Pune FC ला v2 हवं → फक्त त्याचं deployment बदल
+- Mumbai, Nagpur → तसंच राहील
+- कोणताही risk नाही
+- कोणतंही नवं टूल (Istio) लागत नाही
+
+---
+
+# 🚀 Execute करायचं असेल तर — सगळे कमांड्स एकत्र
+
+```bash
+# 1. Pune FC साठी v2 deploy
+kubectl apply -f deployment-pune-v2.yaml
+
+# 2. Mumbai ला v1 राहू द्या (काही करायचं नाही)
+
+# 3. तपासा
+kubectl get pods -o wide
+kubectl get deployments
+
+# 4. जर rollback करायचं असेल Pune FC वर
+kubectl apply -f deployment-pune-v1.yaml
+```
+
+---
+
+भाऊ, आता तू हे सगळं **execute करू शकतोस**, आणि तुझ्या **एका स्टोअरला नवीन billing app** देऊ शकतोस — बिना कोणत्याही गोंधळाशिवाय.
+
+जर तू म्हणालास — *"मला A/B testing खरंच हवं, Istio शिकूया"*, तर मी तुला **step-by-step Istio setup** सुद्धा शिकवेन — पण ते वेगळा पाऊस आहे 😄
+
+आत्ता हे प्रयत्न कर रे, आणि काही issue आला तर विचार! 💪
+
+
+भाऊ, तू म्हणालास — *"Demo kasa te nahi kalala, kasa karu tu A/B or Canary?"*  
+मग चला, **आत्ताच तुला पूर्ण demo देतो** — **बिना Istio, बिना complex tools**, फक्त **Kubernetes च्या बेसिक गोष्टींनी** तू A/B testing आणि Canary release **समजून घेशील आणि execute करशील**.
+
+---
+
+## 🎯 उद्देश:
+> फक्त **10% traffic** नवीन व्हर्जन (v2) ला पाठवा,  
+> उरलेले 90% जुन्या व्हर्जन (v1) वर राहू द्या —  
+> हे **Canary Release** आहे (आणि थोडं A/B सुद्धा simulate करू)
+
+---
+
+# 🧱 आवश्यक घटक:
+
+1. दोन Deployments:
+   - `billing-v1` → 9 पॉड्स (90%)
+   - `billing-v2` → 1 पॉड (10%)
+2. एक Service → दोन्ही पॉड्स ला select करेल
+3. Kubernetes **round-robin load balancing** वापरून traffic distribute होईल
+
+> ⚠️ हे **अचूक canary नाही**, पण **rough 10% traffic** v2 ला मिळेल — आणि तुला समजेल की "हे कसं काम करतं".
+
+---
+
+# 🚀 Step-by-Step Demo: Canary + A/B (सोप्या पद्धतीने)
+
+---
+
+## ✅ Step 1: v1 Deployment (जुनं व्हर्जन — 90%)
+
+```yaml
+# deployment-v1.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-v1
+spec:
+  replicas: 9
+  selector:
+    matchLabels:
+      app: billing
+      version: v1
+  template:
+    meta
+      labels:
+        app: billing
+        version: v1
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v1
+        ports:
+        - containerPort: 8080
+```
+
+### 🔧 Deploy करा:
+```bash
+kubectl apply -f deployment-v1.yaml
+```
+
+---
+
+## ✅ Step 2: v2 Deployment (नवं व्हर्जन — 10%)
+
+```yaml
+# deployment-v2.yaml
+apiVersion: apps/v1
+kind: Deployment
+meta
+  name: billing-v2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billing
+      version: v2
+  template:
+    meta
+      labels:
+        app: billing
+        version: v2
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v2
+        ports:
+        - containerPort: 8080
+```
+
+### 🔧 Deploy करा:
+```bash
+kubectl apply -f deployment-v2.yaml
+```
+
+> ✅ आता एकूण 10 पॉड्स: 9 (v1) + 1 (v2)
+
+---
+
+## ✅ Step 3: Service बनवा (दोन्ही व्हर्जन ला select करेल)
+
+```yaml
+# service.yaml
+apiVersion: v1
+kind: Service
+meta
+  name: billing-service
+spec:
+  selector:
+    app: billing   # ← दोन्ही v1 आणि v2 मध्ये `app: billing` आहे
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
+```
+
+### 🔧 Deploy करा:
+```bash
+kubectl apply -f service.yaml
+```
+
+> ✅ Service आता **सगळ्या 10 पॉड्स ला** round-robin पद्धतीने traffic देईल
+
+---
+
+## ✅ Step 4: तपासा — किती पॉड्स?
+
+```bash
+kubectl get pods -l app=billing
+```
+
+> आउटपुट:
+```
+billing-v1-7d8f6f5b9-abc12    Running
+billing-v1-7d8f6f5b9-def34    Running
+...
+billing-v2-5d7c8f6g7-xyz99    Running
+```
+
+एकूण 10 पॉड्स — 9 v1, 1 v2
+
+---
+
+## ✅ Step 5: Traffic कसं distribute होतं?
+
+Kubernetes Service **round-robin** वापरतो:
+
+- प्रत्येक request एक-एक पॉड वर जाते
+- म्हणजे अंदाजे **10% requests v2 ला** जातील
+- 90% v1 ला
+
+> ✅ हे आहे तुझं **Canary Release (10%)**
+
+---
+
+## ✅ Step 6: Monitoring कसं करायचं?
+
+v2 मध्ये का crash येतोय? का error आहे?
+
+```bash
+# v2 पॉड चे logs पाहा
+kubectl logs deployment/billing-v2
+
+# v1 आणि v2 चे logs एकत्र
+kubectl logs -l app=billing --tail=10
+```
+
+जर v2 मध्ये जास्त errors असतील → rollback करा
+
+---
+
+## ✅ Step 7: Rollout किंवा Rollback?
+
+### 🔺 पुढे जा (100% v2 करा):
+```bash
+# v1 हटवा
+kubectl delete deployment billing-v1
+
+# v2 ला 10 पॉड्स करा
+kubectl scale deployment/billing-v2 --replicas=10
+```
+
+> ✅ सगळं traffic आता v2 वर
+
+---
+
+### 🔻 Rollback (परत v1 वर जा):
+```bash
+# v2 हटवा
+kubectl delete deployment billing-v2
+
+# v1 ला परत 10 पॉड्स करा
+kubectl scale deployment/billing-v1 --replicas=10
+```
+
+> ✅ सगळं traffic परत v1 वर
+
+---
+
+# 🔹 A/B Testing कसं करायचं? (थोडं बोल्ड)
+
+जर तुला **फक्त Pune users** ला v2 द्यायचं असेल, तर?
+
+### 🧩 उपाय: App मध्ये logic घाला
+
+```python
+# billing-app मधलं कोड (उदा: Node.js, Python)
+if request.headers.get("X-Store-ID") == "pune-fc":
+    use_new_billing_flow()
+else:
+    use_old_billing_flow()
+```
+
+### 📦 Deployment:
+- एकच deployment — पण app मध्ये **if condition**
+- Service → एकच
+
+### 🛠️ Deploy करताना:
+```bash
+# सर्व स्टोअर्स ला हेच image
+kubectl apply -f deployment-single.yaml
+```
+
+पण app मध्ये:
+```yaml
+env:
+- name: FEATURE_CANARY_STORES
+  value: "pune-fc,mumbai-kandivali"
+```
+
+> ✅ म्हणजे: **A/B Testing — user/store वर अवलंबून**
+
+---
+
+# 🧠 सारांश: Canary vs A/B — Demo वरून
+
+| गोष्ट | Canary (हा demo) | A/B Testing |
+|------|------------------|------------|
+| कसं routing? | 9:1 पॉड्स → 90%:10% | App logic / header |
+| टूल्स | Kubernetes Service | App code / feature flag |
+| कोणाला? | Random users | Specific users (Pune) |
+| मोजमाप | Logs, errors | UX, clicks, conversion |
+| Execute करायला | ✅ सोपं | ✅ पण app बदल लागतो |
+
+---
+
+# ✅ तुझ्या DMart साठी शिफारस:
+
+> 🔹 **Canary (9:1 pods)** → जर तुला **स्टेबिलिटी टेस्ट** करायची असेल  
+> 🔹 **A/B with feature flag** → जर तुला **नवीन UI/UX** टेस्ट करायचं असेल
+
+---
+
+# 🚨 मर्यादा (हे माहित असावं)
+
+- हे **अचूक 10% नाही** — round-robin perfect नसतो
+- जर पॉड्स restart झाले तर ratio बिघडू शकतो
+- **अचूक canary** साठी Istio, Argo Rollouts, Nginx Ingress (with weights) लागतात
+
+पण तुला सुरुवातीला हे पुरेसं आहे.
+
+---
+
+# 🎬 Execute करायचं असेल तर — सगळे कमांड्स एकत्र
+
+```bash
+# 1. v1 deploy (9 पॉड्स)
+kubectl apply -f deployment-v1.yaml
+
+# 2. v2 deploy (1 पॉड)
+kubectl apply -f deployment-v2.yaml
+
+# 3. Service
+kubectl apply -f service.yaml
+
+# 4. तपासा
+kubectl get pods -l app=billing
+kubectl get svc billing-service
+
+# 5. Logs पाहा
+kubectl logs deployment/billing-v2
+
+# 6. जर ठीक असेल → सगळं v2 वर
+kubectl delete deployment billing-v1
+kubectl scale deployment/billing-v2 --replicas=10
+
+# 7. जर चूक असेल → परत v1 वर
+kubectl delete deployment billing-v2
+kubectl scale deployment/billing-v1 --replicas=10
+```
+
+---
+
+भाऊ, हे सगळं तू **आजच तुझ्या cluster वर execute करू शकतोस**.  
+हे खरंच **canary release चं working model** आहे — सोप्या पद्धतीने.
+
+जर तू म्हणालास — *"मला Istio वापरून proper canary हवं"* किंवा *"Argo Rollouts setup करूया"* — तर मी तुला **step-by-step guide with YAMLs** देईन.
+
+फक्त बोल रे:  
+> "**भाऊ, पुढचा लेव्हल दाखव!**" 😎💪
+
+
+भाऊ, तू म्हणालास — *"Prometheus steps pan add kara, end-to-end kar, sagalya cmds de!"*  
+मग चला, **आत्ताच तुला पूर्ण end-to-end demo** देतो:
+
+> ✅ Argo Rollouts +  
+> ✅ Nginx Ingress +  
+> ✅ Prometheus +  
+> ✅ Grafana +  
+> ✅ Automated Canary +  
+> ✅ **Auto-Rollback on High Error Rate**
+
+सगळं **एकत्र**, **step-by-step**, **सगळे कमांड्स**, **तू execute करू शकशील असे**, आणि **बाब्याला समजेल एवढं सोपं**!
+
+---
+
+## 🎯 उद्देश:
+> तू एक नवं billing app release करतोय (v2),  
+> पण जर **error rate > 1%** असेल, तर Argo Rollouts ला **स्वतःला rollback करायचं आहे** —  
+> हे **Prometheus** मधून metrics घेऊन करायचं.
+
+---
+
+# 🔰 Step 0: आवश्यक गोष्टी
+
+| टूल | कमांड |
+|------|--------|
+| kind | Kubernetes in Docker |
+| kubectl | Kubernetes CLI |
+| kubectl-argo-rollouts | Argo plugin |
+| Helm | Prometheus & Grafana install |
+| Docker | सर्वकाही container मध्ये |
+
+> 💡 आपण `kind` वापरू — सगळं लोकल वर चालेल.
+
+---
+
+# 🚀 Step 1: Kind Cluster बनवा (with extra ports)
+
+```bash
+cat <<EOF > kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+    protocol: TCP
+  - containerPort: 3000
+    hostPort: 3000
+    protocol: TCP
+  - containerPort: 9090
+    hostPort: 9090
+    protocol: TCP
+EOF
+
+kind create cluster --name argo-prom-demo --config kind-config.yaml
+```
+
+---
+
+# 🚀 Step 2: Argo Rollouts Install करा
+
+```bash
+kubectl create namespace argo-rollouts
+kubectl apply -n argo-rollouts --server-side --force-conflicts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+```
+
+### तपासा:
+```bash
+kubectl -n argo-rollouts get pods
+```
+
+> ✅ `rollouts-controller-xxxx` → Running
+
+---
+
+# 🚀 Step 3: kubectl-argo-rollouts plugin install
+
+```bash
+# Linux
+curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+chmod +x kubectl-argo-rollouts-linux-amd64
+sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+# Verify
+kubectl argo rollouts version
+```
+
+---
+
+# 🚀 Step 4: Nginx Ingress Controller Install
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+```
+
+### तपासा:
+```bash
+kubectl -n ingress-nginx get pods
+```
+
+> ✅ `ingress-nginx-controller-xxxx` → Running
+
+---
+
+# 🚀 Step 5: Prometheus & Grafana Install (Helm वापरून)
+
+### 1. Helm install (जर नसेल)
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+```
+
+### 2. Prometheus Stack (kube-prometheus)
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+helm install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace
+```
+
+> ⏳ हे 2-3 मिनिटं घेईल
+
+### तपासा:
+```bash
+kubectl -n monitoring get pods
+```
+
+> ✅ `prometheus-prometheus-...` → Running  
+> ✅ `alertmanager-...` → Running  
+> ✅ `grafana-...` → Running
+
+---
+
+# 🚀 Step 6: Prometheus ला Ingress द्या (बाहेरून access)
+
+```yaml
+# prometheus-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+meta
+  name: prometheus-ingress
+  namespace: monitoring
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /prometheus
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-kube-prometheus-prometheus
+            port:
+              number: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+meta
+  name: grafana-ingress
+  namespace: monitoring
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /grafana
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-grafana
+            port:
+              number: 80
+```
+
+```bash
+kubectl apply -f prometheus-ingress.yaml
+```
+
+> 🔥 आता तू ब्राउझर मध्ये जा:
+- Prometheus: http://localhost/prometheus
+- Grafana: http://localhost/grafana (login: admin / prom-operator)
+
+---
+
+# 🚀 Step 7: Billing App Rollout (v1) with Metrics
+
+### 📁 `rollout-with-prometheus.yaml`
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+meta
+  name: billing-rollout
+spec:
+  replicas: 5
+  strategy:
+    canary:
+      # Traffic splitting
+      steps:
+      - setWeight: 10
+      - pause: {duration: 5m}  # 5 मिनिटं पॉझ
+      - setWeight: 50
+      - pause: {duration: 2m}
+      - setWeight: 100
+
+      # Prometheus मधून मेट्रिक्स घे
+      canaryMetrics:
+      - name: error-rate
+        interval: 1m
+        threshold: "1"
+        provider:
+          prometheus:
+            query: |
+              sum(rate(http_requests_total{job="billing",status=~"5.*"}[2m])) / 
+              sum(rate(http_requests_total{job="billing"}[2m])) * 100
+
+      # जर error > 1%, तर rollback
+      abortCondition:
+        - metricName: error-rate
+          threshold: "1"
+  selector:
+    matchLabels:
+      app: billing
+  template:
+    meta
+      labels:
+        app: billing
+    spec:
+      containers:
+      - name: app
+        image: mycompany/billing-app:v1
+        ports:
+        - containerPort: 8080
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+```
+
+> 📝 `http_requests_total` हे तुझ्या app मध्ये expose केलेलं metric असावं (Prometheus client)
+
+```bash
+kubectl apply -f rollout-with-prometheus.yaml
+```
+
+---
+
+# 🚀 Step 8: Service & Ingress
+
+### 📁 `service-ingress.yaml`
+
+```yaml
+apiVersion: v1
+kind: Service
+meta
+  name: billing-service
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: billing
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+meta
+  name: billing-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "0"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: billing-service
+            port:
+              number: 80
+```
+
+```bash
+kubectl apply -f service-ingress.yaml
+```
+
+---
+
+# 🚀 Step 9: v2 ला update करा (Canary सुरू)
+
+```bash
+kubectl argo rollouts set image billing-rollout app=mycompany/billing-app:v2
+```
+
+---
+
+# 🚀 Step 10: Watch Canary Progress
+
+```bash
+kubectl argo rollouts get rollout billing-rollout --watch
+```
+
+> 🔥 तुला दिसेल:
+```
+Step: 1/4, Weight: 10%, Status: Waiting (pause)
+```
+
+---
+
+# 🚀 Step 11: Simulate High Errors (v2 crash करतोय)
+
+तू एक pod घे आणि त्याचं metric मॅन्युअली बदल:
+
+```bash
+# v2 पॉड शोधा
+kubectl get pods -l app=billing -o name
+
+# exec करून metric बदल (उदाहरणार्थ)
+# किंवा तुझं app 500 return करत असेल
+```
+
+किंवा एक script चालव:
+
+```bash
+while true; do
+  curl -s -o /dev/null -w "%{http_code}\n" http://localhost/buggy-endpoint
+  sleep 0.1
+done
+```
+
+जर error rate > 1% असेल → Argo Rollouts म्हणेल: **"Abort!"**
+
+---
+
+# 🚀 Step 12: Auto-Rollback होईल!
+
+```bash
+kubectl argo rollouts get rollout billing-rollout
+```
+
+> 🔴 Status: **Aborted**  
+> ✅ आणि v1 वर परत गेलं
+
+---
+
+# ✅ सगळे कमांड्स एकत्र (Copy-Paste कर)
+
+```bash
+# 1. Kind cluster
+cat <<EOF > kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 80
+  - containerPort: 3000
+    hostPort: 3000
+  - containerPort: 9090
+    hostPort: 9090
+EOF
+kind create cluster --name argo-prom-demo --config kind-config.yaml
+
+# 2. Argo Rollouts
+kubectl create namespace argo-rollouts
+kubectl apply -n argo-rollouts --server-side -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+
+# 3. Plugin
+curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+chmod +x kubectl-argo-rollouts-linux-amd64
+sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+# 4. Nginx Ingress
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+# 5. Prometheus
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm install prometheus prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace
+
+# 6. Ingress for Prometheus & Grafana
+kubectl apply -f prometheus-ingress.yaml
+
+# 7. Rollout + Service
+kubectl apply -f rollout-with-prometheus.yaml
+kubectl apply -f service-ingress.yaml
+
+# 8. Update to v2
+kubectl argo rollouts set image billing-rollout app=mycompany/billing-app:v2
+
+# 9. Watch
+kubectl argo rollouts get rollout billing-rollout --watch
+```
+
+---
+
+# 🧠 सारांश: हे सगळं कशासाठी?
+
+| गोष्ट | फायदा |
+|------|--------|
+| Argo Rollouts | Canary, steps, pause, promote |
+| Prometheus | Error rate, latency मोजतो |
+| Auto-Rollback | जर error जास्त असेल तर स्वयंचलित परत जा |
+| Nginx Ingress | Traffic split करतो |
+| Grafana | Visual monitoring |
+
+---
+
+# ✅ DMart साठी उपयोग:
+
+- Pune FC साठी 10% traffic v2 ला
+- Prometheus मोजतोय: का error वाढले?
+- जर होत असेल → **स्वयंचलित rollback**
+- इतर स्टोअर्स वर परिणाम नाही
+
+---
+
+भाऊ, हे **production-grade GitOps + Observability + Safe Deployments** चं पूर्ण सेटअप आहे.  
+तू हे सगळं **आजच तुझ्या लॅपवर चालवू शकतोस**.
+
+जर तू म्हणालास — *"हे झालं, आता Argo CD + GitOps करूया!"* —  
+तर मी तुला **पूर्ण CI/CD pipeline** शिकवेन — GitHub, PR, auto-deploy, rollback.
+
+फक्त बोल रे भाऊ:  
+> **"Dada, आता पूर्ण DevOps दाखव!"** 😎🚀💥
