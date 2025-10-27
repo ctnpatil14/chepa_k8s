@@ -1,0 +1,103 @@
+
+presigned timebased ekatra use kartat
+
+Yes, presigned URLs in AWS S3 do have an expiration time that is set when they are created, and the expiration is strictly enforced based on time.
+
+- When creating a presigned URL, you specify a duration for which the URL should remain valid, from as little as 1 second up to a maximum of 7 days (604800 seconds) if using AWS CLI or SDKs. If created via AWS Console, the limit is typically up to 12 hours[1][6].
+- Importantly, if the presigned URL is generated with temporary credentials (such as assuming an IAM role using STS), the URL can expire earlier than the configured expiration time because it also depends on the validity period of the underlying temporary credentials themselves. The shortest of these expiration times applies[1][3][4].
+- For example, if your temporary STS token expires in 1 hour but you generate a presigned URL with 2 hours expiry, the URL will expire after 1 hour when the token expires.
+- During the valid period, the URL can be used multiple times. If a download starts before expiration but continues past it, the operation will still succeed[1].
+- If you want very long-term access beyond 7 days, presigned URLs alone cannot support that; alternative methods like CloudFront signed URLs should be used[3].
+
+So yes, presigned URLs are time-based and the expiration time works in conjunction with any time constraints from the credentials used to create them[1][3][4].
+
+This means presigned URLs and their time-based expirations work together to securely and temporarily grant access to S3 objects.
+
+Citations:
+[1] Download and upload objects with presigned URLs https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html
+[2] Presigned S3 URL Expires before specified time : r/aws https://www.reddit.com/r/aws/comments/17kadfy/presigned_s3_url_expires_before_specified_time/
+[3] Why do S3 pre signed URLs expire after 12 hours https://elasticscale.com/blog/why-do-s3-pre-signed-urls-expire-after-12-hours-despite-setting-a-longer-duration/
+[4] AWS S3 pre signed URL without Expiry date https://stackoverflow.com/questions/24014306/aws-s3-pre-signed-url-without-expiry-date
+[5] Sharing objects by using presigned URLs https://docs.aws.amazon.com/AmazonS3/latest/s3-outposts/S3OutpostsShareObjectPresignedURL.html
+[6] Sharing objects with presigned URLs - AWS Documentation https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+[7] Generating non-expiring signed URLs on AWS https://docs.kili-technology.com/docs/generating-non-expiring-signed-urls-on-aws
+
+
+terraform ne kasa karnar
+
+
+
+
+
+Terraform itself does not natively create presigned URLs for S3 objects since it is an infrastructure-as-code tool; presigned URLs are intended for runtime use. However, you can integrate presigned URL creation by combining Terraform's resource provisioning with local or external scripts that generate the URLs after your resources are created[1][4].
+
+### Example: Terraform with Local-Exec Provisioner
+
+Here is a Terraform code snippet that shows how to create an S3 bucket, upload an object, and generate a presigned URL using a local-exec provisioner (which will run an AWS CLI command after resource creation):
+
+```hcl
+resource "aws_s3_bucket" "logs" {
+  bucket = "my-logs-bucket"
+}
+
+resource "aws_s3_bucket_object" "logfile" {
+  bucket = aws_s3_bucket.logs.id
+  key    = "sample-log.txt"
+  content = "Sample log content"
+}
+
+resource "null_resource" "presigned_url" {
+  provisioner "local-exec" {
+    command = "aws s3 presign s3://${aws_s3_bucket.logs.id}/${aws_s3_bucket_object.logfile.key} --expires-in 3600 > presigned_url.txt"
+  }
+}
+
+data "local_file" "presigned_url" {
+  depends_on = [null_resource.presigned_url]
+  filename   = "${path.module}/presigned_url.txt"
+}
+
+output "presigned_logfile_url" {
+  value = data.local_file.presigned_url.content
+}
+```
+- This example creates an S3 bucket and object, then runs the AWS CLI to create a presigned URL that expires in 1 hour, saving it to a file and outputting it[1].
+
+### Alternative: External Data Source
+
+You can also use Terraform's external data source to call a shell script, Python, or other code to create a presigned URL and return it to Terraform for use in other resources[1].
+
+```hcl
+data "external" "presign" {
+  program = ["bash", "${path.module}/presign.sh"]
+  query = {
+    bucket = "my-logs-bucket"
+    key    = "sample-log.txt"
+    expires_in = 3600
+  }
+}
+
+output "presigned_url" {
+  value = data.external.presign.result.url
+}
+```
+The `presign.sh` script would generate the presigned URL using AWS CLI or SDK.
+
+### Key Points
+
+- Terraform does most of the resource provisioning.
+- Presigned URLs are created post-deployment using local-exec or external scripts.
+- You can control the time-based expiry and automate the process as part of your infrastructure workflow[1][4].
+- Modules such as `terra3/aws` provide patterns, but native support for presigned URLs is limited; scripting is the standard solution.
+
+This way, you can automate the infrastructure and the generation of presigned, time-limited S3 URLs together using Terraform[1][4].
+
+Citations:
+[1] A hack to generate a presigned url in terraform https://gist.github.com/kharandziuk/261946c0eabc66cf6fb96f0cd7d3ecae
+[2] aws-samples/s3-presignedurl-staticips-endpoint-with- ... https://github.com/aws-samples/s3-presignedurl-staticips-endpoint-with-terraform
+[3] Creating Amazon S3 Pre-Signed URLs: Hands-On Guide https://www.linkedin.com/pulse/creating-amazon-s3-pre-signed-urls-hands-on-guide-naim-hossen-4o0hc
+[4] pre-signed-url - it-objects/terra3/aws - Terraform Registry https://registry.terraform.io/modules/it-objects/terra3/aws/latest/examples/pre-signed-url
+[5] Upload file to Amazon S3 bucket using presigned URL https://serverlessland.com/patterns/apigw-lambda-s3-terraform-java
+[6] Consolidate Amazon S3 presigned URL generation and ... https://docs.aws.amazon.com/prescriptive-guidance/latest/patterns/consolidate-amazon-s3-presigned-url-generation-and-object-downloads-by-using-an-endpoint-associated-with-static-ip-addresses.html
+[7] aws_s3_bucket_object | Resources | hashicorp/aws | Terraform https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/s3_bucket_object
+[8] Create a presigned URL for Amazon S3 using an AWS SDK https://docs.aws.amazon.com/AmazonS3/latest/API/s3_example_s3_Scenario_PresignedUrl_section.html
