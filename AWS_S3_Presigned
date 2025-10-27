@@ -1,4 +1,52 @@
 
+saglya sathi example pan de
+
+Here's an example of how you can give a vendor temporary access to your S3 bucket to check logs, using pre-signed URLs, which are simple and secure:
+
+### Example: Generating a Pre-Signed URL for Temporary Access
+
+Suppose you want the vendor to access a specific log file in your S3 bucket for a limited time, say 2 hours.
+
+**Using AWS CLI**:
+```bash
+aws s3 presign s3://your-bucket-name/path/to/logfile.log --expires-in 7200
+```
+This command generates a URL valid for 7200 seconds (2 hours). The vendor can use this link to download the log file without needing AWS permissions permanently.
+
+**Using AWS SDK (Python example with Boto3)**:
+```python
+import boto3
+
+s3_client = boto3.client('s3')
+url = s3_client.generate_presigned_url(
+    ClientMethod='get_object',
+    Params={'Bucket': 'your-bucket-name', 'Key': 'path/to/logfile.log'},
+    ExpiresIn=7200  # 2 hours
+)
+
+print(url)
+```
+You can send this URL to the vendor, and after 2 hours, it will expire, ensuring controlled, limited access.
+
+### Summary
+- Generate pre-signed URLs for specific objects in your bucket.
+- Set an expiration time based on your requirements.
+- Share the URL securely with the vendor.
+- After expiration, the URL becomes invalid automatically.
+
+This method offers a straightforward, secure way to provide temporary access without modifying bucket policies or creating IAM roles for the vendor[6][8].
+
+Citations:
+[1] Request access to Amazon S3 data through ... https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-grants-credentials.html
+[2] Enabling Just-In-Time (JIT) Access for AWS S3 Buckets https://www.p0.dev/blog/aws-temp-access
+[3] Use temporary credentials with AWS resources https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_use-resources.html
+[4] Granting Temporary Access to S3 Objects https://pushbuildtestdeploy.com/granting-temporary-access-to-s3-objects/
+[5] Making requests using IAM user temporary credentials https://docs.aws.amazon.com/AmazonS3/latest/API/AuthUsingTempSessionToken.html
+[6] S3 Pre-Signed URLs for Temporary Object Access in AWS https://www.msp360.com/resources/blog/s3-pre-signed-url-guide/
+[7] Examples of Amazon S3 bucket policies https://docs.aws.amazon.com/AmazonS3/latest/userguide/example-bucket-policies.html
+[8] Sharing objects with presigned URLs - AWS Documentation https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+[9] Setting up temporary credentials or a Role ARN for ... https://dataplatform.cloud.ibm.com/docs/content/wsj/manage-data/conn-az3-tempcreds.html?context=wx
+
 presigned timebased ekatra use kartat
 
 Yes, presigned URLs in AWS S3 do have an expiration time that is set when they are created, and the expiration is strictly enforced based on time.
